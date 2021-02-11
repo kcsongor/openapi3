@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
@@ -33,6 +32,7 @@ import Data.Aeson (Object (..), SumEncoding (..), ToJSON (..), ToJSONKey (..),
                    ToJSONKeyFunction (..), Value (..))
 import Data.Char
 import Data.Data (Data)
+import Type.Reflection (Typeable, typeRep)
 import Data.Foldable (traverse_)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
@@ -140,7 +140,7 @@ class ToSchema a where
   -- Note that the schema itself is included in definitions
   -- only if it is recursive (and thus needs its definition in scope).
   declareNamedSchema :: Proxy a -> Declare (Definitions Schema) NamedSchema
-  default declareNamedSchema :: (Generic a, GToSchema (Rep a)) =>
+  default declareNamedSchema :: (Typeable a, Generic a, GToSchema (Rep a)) =>
     Proxy a -> Declare (Definitions Schema) NamedSchema
   declareNamedSchema = genericDeclareNamedSchema defaultSchemaOptions
 
@@ -429,7 +429,7 @@ instance HasResolution a => ToSchema (Fixed a) where declareNamedSchema = plain 
 instance ToSchema a => ToSchema (Maybe a) where
   declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy a)
 
-instance (ToSchema a, ToSchema b) => ToSchema (Either a b) where
+instance (ToSchema a, ToSchema b, Typeable a, Typeable b) => ToSchema (Either a b) where
   -- To match Aeson instance
   declareNamedSchema = genericDeclareNamedSchema defaultSchemaOptions { sumEncoding = ObjectWithSingleField }
 
@@ -441,12 +441,12 @@ instance ToSchema UUID.UUID where
   declareNamedSchema p = pure $ named "UUID" $ paramSchemaToSchema p
     & example ?~ toJSON (UUID.toText UUID.nil)
 
-instance (ToSchema a, ToSchema b) => ToSchema (a, b)
-instance (ToSchema a, ToSchema b, ToSchema c) => ToSchema (a, b, c)
-instance (ToSchema a, ToSchema b, ToSchema c, ToSchema d) => ToSchema (a, b, c, d)
-instance (ToSchema a, ToSchema b, ToSchema c, ToSchema d, ToSchema e) => ToSchema (a, b, c, d, e)
-instance (ToSchema a, ToSchema b, ToSchema c, ToSchema d, ToSchema e, ToSchema f) => ToSchema (a, b, c, d, e, f)
-instance (ToSchema a, ToSchema b, ToSchema c, ToSchema d, ToSchema e, ToSchema f, ToSchema g) => ToSchema (a, b, c, d, e, f, g)
+instance (ToSchema a, ToSchema b, Typeable a, Typeable b) => ToSchema (a, b)
+instance (ToSchema a, ToSchema b, ToSchema c, Typeable a, Typeable b, Typeable c) => ToSchema (a, b, c)
+instance (ToSchema a, ToSchema b, ToSchema c, ToSchema d, Typeable a, Typeable b, Typeable c, Typeable d) => ToSchema (a, b, c, d)
+instance (ToSchema a, ToSchema b, ToSchema c, ToSchema d, ToSchema e, Typeable a, Typeable b, Typeable c, Typeable d, Typeable e) => ToSchema (a, b, c, d, e)
+instance (ToSchema a, ToSchema b, ToSchema c, ToSchema d, ToSchema e, ToSchema f, Typeable a, Typeable b, Typeable c, Typeable d, Typeable e, Typeable f) => ToSchema (a, b, c, d, e, f)
+instance (ToSchema a, ToSchema b, ToSchema c, ToSchema d, ToSchema e, ToSchema f, ToSchema g, Typeable a, Typeable b, Typeable c, Typeable d, Typeable e, Typeable f, Typeable g) => ToSchema (a, b, c, d, e, f, g)
 
 timeSchema :: T.Text -> Schema
 timeSchema fmt = mempty
@@ -497,10 +497,10 @@ instance ToSchemaByteStringError BSL.ByteString => ToSchema BSL.ByteString where
 instance ToSchema IntSet where declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy (Set Int))
 
 -- | NOTE: This schema does not account for the uniqueness of keys.
-instance ToSchema a => ToSchema (IntMap a) where
+instance (ToSchema a, Typeable a) => ToSchema (IntMap a) where
   declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy [(Int, a)])
 
-instance (ToJSONKey k, ToSchema k, ToSchema v) => ToSchema (Map k v) where
+instance (ToJSONKey k, ToSchema k, ToSchema v, Typeable k, Typeable v) => ToSchema (Map k v) where
   declareNamedSchema _ = case toJSONKey :: ToJSONKeyFunction k of
       ToJSONKeyText  _ _ -> declareObjectMapSchema
       ToJSONKeyValue _ _ -> declareNamedSchema (Proxy :: Proxy [(k, v)])
@@ -511,7 +511,7 @@ instance (ToJSONKey k, ToSchema k, ToSchema v) => ToSchema (Map k v) where
           & type_ ?~ OpenApiObject
           & additionalProperties ?~ AdditionalPropertiesSchema schema
 
-instance (ToJSONKey k, ToSchema k, ToSchema v) => ToSchema (HashMap k v) where
+instance (ToJSONKey k, ToSchema k, ToSchema v, Typeable k, Typeable v) => ToSchema (HashMap k v) where
   declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy (Map k v))
 
 instance {-# OVERLAPPING #-} ToSchema Object where
@@ -592,7 +592,7 @@ genericDeclareNamedSchemaNewtype opts f proxy = genericNameSchema opts proxy <$>
 -- Note: this is only useful when @key@ is encoded with 'ToJSONKeyText'.
 -- If it is encoded with 'ToJSONKeyValue' then a regular schema for @[(key, value)]@ is used.
 declareSchemaBoundedEnumKeyMapping :: forall map key value.
-  (Bounded key, Enum key, ToJSONKey key, ToSchema key, ToSchema value)
+  (Bounded key, Enum key, ToJSONKey key, ToSchema key, ToSchema value, Typeable key, Typeable value)
   => Proxy (map key value) -> Declare (Definitions Schema) Schema
 declareSchemaBoundedEnumKeyMapping _ = case toJSONKey :: ToJSONKeyFunction key of
   ToJSONKeyText keyToText _ -> objectSchema keyToText
@@ -620,12 +620,12 @@ declareSchemaBoundedEnumKeyMapping _ = case toJSONKey :: ToJSONKeyFunction key o
 -- Note: this is only useful when @key@ is encoded with 'ToJSONKeyText'.
 -- If it is encoded with 'ToJSONKeyValue' then a regular schema for @[(key, value)]@ is used.
 toSchemaBoundedEnumKeyMapping :: forall map key value.
-  (Bounded key, Enum key, ToJSONKey key, ToSchema key, ToSchema value)
+  (Bounded key, Enum key, ToJSONKey key, ToSchema key, ToSchema value, Typeable key, Typeable value)
   => Proxy (map key value) -> Schema
 toSchemaBoundedEnumKeyMapping = flip evalDeclare mempty . declareSchemaBoundedEnumKeyMapping
 
 -- | A configurable generic @'Schema'@ creator.
-genericDeclareSchema :: (Generic a, GToSchema (Rep a)) =>
+genericDeclareSchema :: (Generic a, GToSchema (Rep a), Typeable a) =>
   SchemaOptions -> Proxy a -> Declare (Definitions Schema) Schema
 genericDeclareSchema opts proxy = _namedSchemaSchema <$> genericDeclareNamedSchema opts proxy
 
@@ -633,9 +633,11 @@ genericDeclareSchema opts proxy = _namedSchemaSchema <$> genericDeclareNamedSche
 -- This function applied to @'defaultSchemaOptions'@
 -- is used as the default for @'declareNamedSchema'@
 -- when the type is an instance of @'Generic'@.
-genericDeclareNamedSchema :: forall a. (Generic a, GToSchema (Rep a)) =>
+genericDeclareNamedSchema :: forall a. (Typeable a, Generic a, GToSchema (Rep a)) =>
   SchemaOptions -> Proxy a -> Declare (Definitions Schema) NamedSchema
-genericDeclareNamedSchema opts _ = gdeclareNamedSchema opts (Proxy :: Proxy (Rep a)) mempty
+genericDeclareNamedSchema opts _ =
+  rename (Just name) <$> gdeclareNamedSchema opts (Proxy :: Proxy (Rep a)) mempty
+  where name = T.replace " " "_" $ T.pack $ show $ typeRep @a
 
 -- | Derive a 'Generic'-based name for a datatype and assign it to a given 'Schema'.
 genericNameSchema :: forall a d f.
@@ -861,49 +863,6 @@ data Proxy2 a b = Proxy2
 
 data Proxy3 a b c = Proxy3
 
--- | This class allows to generate schemas for polymorphic types (of kind @Type -> Type@).
---
--- Intended usage:
---
--- >>> data Foo a = Foo { foo :: a, bar :: Int } deriving (Eq, Show, Generic, ToSchema1)
--- >>> :{
--- instance (ToSchema a, Typeable a) => ToSchema (Foo a) where
---   declareNamedSchema _ = declareNamedSchema @(BySchema1 Foo a) Proxy
--- :}
---
--- >>> toNamedSchema @(Foo Int) Proxy ^. name
--- Just "Foo_Int"
--- >>> toNamedSchema @(Foo Bool) Proxy ^. name
--- Just "Foo_Bool"
--- >>> toNamedSchema @(Foo (Foo T.Text)) Proxy ^. name
--- Just "Foo_(Foo_Text)"
-class ToSchema1 (f :: * -> *) where
-  declareNamedSchema1 :: (Generic (f a), GToSchema (Rep (f a)), ToSchema a) => Proxy f -> Proxy a -> Declare (Definitions Schema) NamedSchema
-
-  -- It would be cleaner to have GToSchema constraint only on default signature and not in the class method
-  -- above, however sadly GHC does not like it.
-  default declareNamedSchema1 :: forall a. (ToSchema a, Generic (f a), GToSchema (Rep (f a))) => Proxy f -> Proxy a -> Declare (Definitions Schema) NamedSchema
-  declareNamedSchema1 _ _ = genericDeclareNamedSchema @(f a) defaultSchemaOptions Proxy
-
-{- | For GHC 8.6+ it's more convenient to use @DerivingVia@ to derive instances of 'ToSchema'
-using 'ToSchema1' instance, like this:
-
-#if __GLASGOW_HASKELL__ >= 806
->>> data Foo a = Foo { foo :: a, bar :: Int } deriving (Eq, Show, Generic, ToSchema1)
->>> deriving via BySchema1 Foo a instance (ToSchema a, Typeable a) => ToSchema (Foo a)
-#else
-> data Foo a = Foo { foo :: a, bar :: Int } deriving (Eq, Show, Generic, ToSchema1)
-> deriving via BySchema1 Foo a instance (ToSchema a, Typeable a) => ToSchema (Foo a)
-#endif
--}
-newtype BySchema1 f a = BySchema1 (f a)
-
-instance (ToSchema1 f, Generic (f a), GToSchema (Rep (f a)), Typeable (f a), ToSchema a) => ToSchema (BySchema1 f a) where
-  declareNamedSchema _ = do
-    sch <- declareNamedSchema1 @f @a Proxy Proxy
-    let tName = T.replace " " "_" $ T.pack $ show $ typeRep @(f a)
-    return $ rename (Just tName) sch
-
 {- $setup
 >>> import Data.OpenApi
 >>> import Data.Aeson (encode)
@@ -912,7 +871,4 @@ instance (ToSchema1 f, Generic (f a), GToSchema (Rep (f a)), Typeable (f a), ToS
 >>> :set -XDeriveAnyClass
 >>> :set -XStandaloneDeriving
 >>> :set -XTypeApplications
-#if __GLASGOW_HASKELL__ >= 806
->>> :set -XDerivingVia
-#endif
 -}
